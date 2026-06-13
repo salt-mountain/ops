@@ -1,7 +1,6 @@
 name: Lint
 
-# Dogfood: this repo ships a shell script, so lint it. shellcheck is preinstalled
-# on GitHub-hosted ubuntu runners, so no extra (unpinned) action needed.
+# shellcheck is preinstalled on ubuntu runners, so no extra action needed.
 on:
   pull_request:
   push:
