@@ -12,7 +12,7 @@ on:
         type: string
         required: false
         # renovate: datasource=github-releases depName=oven-sh/bun
-        default: "1.3.14"
+        default: "1.3.5"
       dependency_review:
         description: "Run dependency-review on PRs (public repos only; set by bootstrap)."
         type: boolean
