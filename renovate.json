@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabledManagers": ["custom.regex"],
+  "dependencyDashboard": false,
+  "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [".github/workflows/verify.yml"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+default:\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "extractVersionTemplate": "^bun-v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    { "matchUpdateTypes": ["major"], "minimumReleaseAge": "30 days" },
+    { "matchUpdateTypes": ["minor", "patch"], "minimumReleaseAge": "7 days" }
+  ]
+}

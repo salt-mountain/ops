@@ -15,9 +15,10 @@ on:
   workflow_call:
     inputs:
       bun_version:
-        description: "CI Bun version — the fleet's single source of truth. Bump here."
+        description: "CI Bun version (managed by Renovate)."
         type: string
         required: false
+        # renovate: datasource=github-releases depName=oven-sh/bun
         default: "1.3.14"
       dependency_review:
         description: "Run dependency-review on PRs. Public-only (API limitation); bootstrap sets it by visibility — not a repo preference."
