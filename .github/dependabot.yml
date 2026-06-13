@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Every pinned action in the whole system lives in this repo's .github/workflows/
+  # (verify.yml + lint.yml) — baseline/ has none — so this single entry keeps the
+  # entire fleet's action pins current. Consumers track the verify.yml ref via
+  # their own github-actions Dependabot (see README).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7

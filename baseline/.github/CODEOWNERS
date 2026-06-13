@@ -1,0 +1,5 @@
+# Auto-request review from the repo owner on every pull request — including
+# Dependabot's — so they surface in the GitHub "Awaiting your review" dashboard
+# (filter: is:open is:pr review-requested:@me). The deprecated `reviewers:` key
+# in dependabot.yml no longer works; CODEOWNERS is the supported path.
+* @salt-mountain

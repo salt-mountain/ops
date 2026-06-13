@@ -1,0 +1,3 @@
+# Auto-request review from the repo owner on every PR (incl. Dependabot's), so
+# they surface in the "Awaiting your review" dashboard.
+* @salt-mountain

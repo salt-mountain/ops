@@ -1,0 +1,8 @@
+dist
+.astro
+node_modules
+**/node_modules
+bun.lock
+**/bun.lock
+**/cdk.out
+*.svg
