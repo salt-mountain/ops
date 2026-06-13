@@ -83,8 +83,7 @@ DEFAULT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo main)"
 # ---- generate the CI caller (the one file that's templated, not copied) -----
 gen_ci_yaml() {
   local ops_ref="$1" ops_tag="${2:-}"
-  # Pin to the SHA, but add a "# <tag>" comment when ops has a release tag — that
-  # comment is what lets the CONSUMER's Dependabot auto-bump this ref over time.
+  # The "# <tag>" comment is what lets the consumer's Dependabot bump this ref.
   local ref_line="@$ops_ref"
   [ -n "$ops_tag" ] && ref_line="@$ops_ref # $ops_tag"
   mkdir -p .github/workflows
@@ -108,8 +107,7 @@ jobs:
   verify:
     uses: $OPS_SLUG/.github/workflows/verify.yml$ref_line
 YAML
-    # Standard checks always run (no toggles). The only input is dependency_review,
-    # which is public-only (API limitation), so private repos need no `with:` block.
+    # Only public repos need a `with:` block (dependency_review is public-only).
     if [ "$VISIBILITY" = "public" ]; then
       echo "    with:"
       echo "      dependency_review: true"
@@ -176,9 +174,7 @@ apply_settings() {
       -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled' >/dev/null || true
   fi
 
-  # Branch protection. Reusable-workflow check shows as "verify / verify" — the
-  # single required context for every repo (dependency-review is now a step
-  # inside that job, not a separate check).
+  # Branch protection. The reusable-workflow check reports as "verify / verify".
   local contexts='"verify / verify"'
   gh api -X PUT "repos/$SLUG/branches/$DEFAULT_BRANCH/protection" --input - >/dev/null <<JSON
 {

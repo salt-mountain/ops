@@ -1,8 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "enabledManagers": ["custom.regex"],
+  "gitAuthor": "ops-renovate <48201364+salt-mountain@users.noreply.github.com>",
   "dependencyDashboard": false,
   "internalChecksFilter": "strict",
+  "vulnerabilityAlerts": { "enabled": false },
   "customManagers": [
     {
       "customType": "regex",

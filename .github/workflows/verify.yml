@@ -1,15 +1,8 @@
 name: Reusable verify
 
-# The canonical CI for every salt-mountain repo. Consumers call it from a thin
-# caller (bootstrap.sh generates it). Change CI logic HERE once; every repo picks
-# it up on its next release bump.
-#
-# Every repo runs the SAME checks — format:check, check, test, build — so they are
-# deliberately NOT toggleable. A repo missing one of those scripts fails CI by
-# design; that's the standard being enforced. (Test-less repos define a no-op
-# `test`; bootstrap.sh reports any missing scripts when baselining a repo.)
-#
-# Branch-protection note: the check reports as "verify / verify".
+# Reusable CI every repo calls. format:check / check / test / build run on every
+# repo — not toggleable; a missing script fails CI by design. Branch-protection
+# context is "verify / verify".
 
 on:
   workflow_call:
@@ -21,11 +14,11 @@ on:
         # renovate: datasource=github-releases depName=oven-sh/bun
         default: "1.3.14"
       dependency_review:
-        description: "Run dependency-review on PRs. Public-only (API limitation); bootstrap sets it by visibility — not a repo preference."
+        description: "Run dependency-review on PRs (public repos only; set by bootstrap)."
         type: boolean
         default: false
       extra_scripts:
-        description: "Additive only: extra `bun run <name>` scripts a repo runs ON TOP of the standard set (e.g. typecheck:functions)."
+        description: "Extra `bun run <name>` scripts, run on top of the standard set."
         type: string
         required: false
         default: ""
@@ -40,9 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      # One project gate, named once. Every Bun step references it, so a
-      # project-less repo (freshly bootstrapped) is green; the standard checks
-      # switch on the moment a package.json lands.
+      # Gate every Bun step on a package.json, so a project-less repo stays green.
       - id: detect
         run: echo "project=${{ hashFiles('package.json') != '' }}" >> "$GITHUB_OUTPUT"
 
@@ -71,7 +62,7 @@ jobs:
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: bun install --frozen-lockfile
 
-      # Additive extras run before the standard set (fail fast on repo-specific checks).
+      # Repo-specific extras, before the standard set.
       - name: Extra scripts
         if: ${{ fromJSON(steps.detect.outputs.project) && inputs.extra_scripts != '' }}
         env:
@@ -83,7 +74,7 @@ jobs:
             echo "::endgroup::"
           done
 
-      # The enforced standard set — same on every repo, no toggles.
+      # Standard set — runs on every repo.
       - name: Format check
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: bun run format:check
