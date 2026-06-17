@@ -86,6 +86,10 @@ gen_ci_yaml() {
   # The "# <tag>" comment is what lets the consumer's Dependabot bump this ref.
   local ref_line="@$ops_ref"
   [ -n "$ops_tag" ] && ref_line="@$ops_ref # $ops_tag"
+  # Public repos also grant pull-requests: write so verify.yml's dependency-review
+  # step can post its findings as a PR comment.
+  local pr_perm=""
+  [ "$VISIBILITY" = "public" ] && pr_perm=$'\n  pull-requests: write # dependency-review comment'
   mkdir -p .github/workflows
   {
     cat <<YAML
@@ -97,7 +101,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: read$pr_perm
 
 concurrency:
   group: ci-\${{ github.workflow }}-\${{ github.ref }}

@@ -23,9 +23,8 @@ on:
         required: false
         default: ""
 
-# Least privilege: CI only needs to read the repo.
-permissions:
-  contents: read
+# Permissions inherit from the caller — public callers add pull-requests: write
+# for the dependency-review comment; private callers stay read-only.
 
 jobs:
   verify:
@@ -42,6 +41,7 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
+          comment-summary-in-pr: on-failure
 
       - name: Setup Bun
         if: ${{ fromJSON(steps.detect.outputs.project) }}
