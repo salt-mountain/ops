@@ -1,0 +1,66 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "salt-mountain baseline, copied by ops/bootstrap.sh and owned by this repo from then on.",
+    "Renovate only tracks version strings Dependabot can't see (custom regex managers below).",
+    "Dependabot owns package and GitHub Actions updates, and CVE fixes.",
+    "Add repo-specific customManagers / packageRules after the baseline ones."
+  ],
+  "enabledManagers": ["custom.regex"],
+  "dependencyDashboard": false,
+  "vulnerabilityAlerts": { "enabled": false },
+  "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Bun: package.json packageManager (the repo's source of truth)",
+      "managerFilePatterns": ["/(^|/)package\\.json$/"],
+      "matchStrings": [
+        "\"packageManager\"\\s*:\\s*\"bun@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "oven-sh/bun",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^bun-v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Bun: .bun-version (local tooling)",
+      "managerFilePatterns": ["/(^|/)\\.bun-version$/"],
+      "matchStrings": ["^(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s*$"],
+      "depNameTemplate": "oven-sh/bun",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^bun-v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Bun: oven/bun image tags in Dockerfiles",
+      "managerFilePatterns": ["/(^|/)Dockerfile[^/]*$/", "/\\.Dockerfile$/"],
+      "matchStrings": ["oven/bun:(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "oven-sh/bun",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^bun-v(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Bake time: hold new releases before proposing them (supply-chain age gate).",
+      "matchUpdateTypes": ["minor", "patch"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "minimumReleaseAge": "30 days"
+    },
+    {
+      "description": "One PR per Bun release, moving every pin together (verify fails if they disagree).",
+      "matchDepNames": ["oven-sh/bun"],
+      "groupName": "bun"
+    },
+    {
+      "description": "Bun patches auto-merge on green. Minors wait for a human: check dependabot-core's bun/Dockerfile BUN_VERSION first, since Dependabot writes lockfiles with that Bun.",
+      "matchDepNames": ["oven-sh/bun"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    }
+  ]
+}

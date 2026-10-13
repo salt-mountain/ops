@@ -1,0 +1,58 @@
+name: Dependabot auto-merge
+
+# Turns on GitHub auto-merge for Dependabot patch/minor PRs (version and
+# security updates alike); GitHub then squash-merges once required checks pass.
+# Majors are left for a human. Renovate auto-merges its own PRs (renovate.json).
+#
+# Uses a GitHub App token, not GITHUB_TOKEN: a merge performed via GITHUB_TOKEN
+# doesn't trigger push workflows, so verify-on-main and deploy would never run.
+# Needs Dependabot secrets AUTOMERGE_APP_CLIENT_ID and AUTOMERGE_APP_PRIVATE_KEY
+# (see salt-mountain/ops README); without them this job is a no-op.
+
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - id: policy
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          HAS_APP: ${{ secrets.AUTOMERGE_APP_CLIENT_ID != '' }}
+        run: |
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch | version-update:semver-minor) eligible=true ;;
+            *) eligible=false ;;
+          esac
+          if [ "$eligible" = true ] && [ "$HAS_APP" != true ]; then
+            echo "::warning::Eligible for auto-merge ($UPDATE_TYPE), but AUTOMERGE_APP_* Dependabot secrets aren't set."
+            eligible=false
+          fi
+          echo "Update type: ${UPDATE_TYPE:-unknown} -> auto-merge: $eligible"
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+
+      - id: token
+        if: steps.policy.outputs.eligible == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          # Action-pin PRs edit .github/workflows/*; GitHub refuses to let an app
+          # merge workflow changes without this.
+          permission-workflows: write
+
+      - if: steps.policy.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

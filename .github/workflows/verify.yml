@@ -1,18 +1,19 @@
 name: Reusable verify
 
-# Reusable CI every repo calls. format:check / check / test / build run on every
-# repo — not toggleable; a missing script fails CI by design. Branch-protection
-# context is "verify / verify".
+# Reusable CI every repo calls, on pull requests and on pushes to main.
+# format:check / check / test / build run on every repo — not toggleable; a
+# missing script fails CI by design. Branch-protection context is
+# "verify / verify". Bot PRs auto-merge on green, so this is the gate between an
+# update and production: on main, deploy jobs should `needs:` this workflow.
 
 on:
   workflow_call:
     inputs:
-      bun_version:
-        description: "CI Bun version (managed by Renovate)."
+      node_version:
+        description: "Node.js for tools with node shebangs (astro, vue-tsc). Match your deploy workflow."
         type: string
         required: false
-        # renovate: datasource=github-releases depName=oven-sh/bun
-        default: "1.4.2"
+        default: "22"
       dependency_review:
         description: "Run dependency-review on PRs (public repos only; set by bootstrap)."
         type: boolean
@@ -23,8 +24,9 @@ on:
         required: false
         default: ""
 
-# Permissions inherit from the caller — public callers add pull-requests: write
-# for the dependency-review comment; private callers stay read-only.
+# Permissions inherit from the caller. Callers grant issues: write so a failure
+# on main opens an alert issue; public callers also grant pull-requests: write
+# for the dependency-review comment.
 
 jobs:
   verify:
@@ -32,9 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Gate every Bun step on a package.json, so a project-less repo stays green.
+      # Gate Bun steps on a package.json (a project-less repo stays green) and
+      # the image build on a root Dockerfile.
       - id: detect
-        run: echo "project=${{ hashFiles('package.json') != '' }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "project=${{ hashFiles('package.json') != '' }}" >> "$GITHUB_OUTPUT"
+          echo "docker=${{ hashFiles('Dockerfile') != '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Dependency review
         if: ${{ inputs.dependency_review && github.event_name == 'pull_request' }}
@@ -43,24 +48,67 @@ jobs:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
 
+      # package.json "packageManager" is the repo's single Bun version: setup-bun
+      # reads it, and so do deploy workflows. Fail fast if any other pin in the
+      # repo disagrees, so CI, deploy, Docker and local dev can't drift apart.
+      - name: Check Bun pins agree
+        if: ${{ fromJSON(steps.detect.outputs.project) }}
+        run: |
+          pm="$(jq -r '.packageManager // ""' package.json)"
+          case "$pm" in
+            bun@*) want="${pm#bun@}"; want="${want%%+*}" ;;
+            *) echo "::error file=package.json::packageManager must be \"bun@<version>\" (got \"$pm\")"; exit 1 ;;
+          esac
+          fail=0
+          if [ -f .bun-version ]; then
+            have="$(tr -d '[:space:]' < .bun-version)"
+            if [ "$have" != "$want" ]; then
+              echo "::error file=.bun-version::.bun-version is $have but packageManager is bun@$want"
+              fail=1
+            fi
+          fi
+          while IFS= read -r f; do
+            while IFS= read -r tag; do
+              if [ "$tag" != "$want" ]; then
+                echo "::error file=$f::$f uses oven/bun:$tag but packageManager is bun@$want"
+                fail=1
+              fi
+            done < <(grep -oE 'oven/bun:[0-9]+\.[0-9]+\.[0-9]+' "$f" | cut -d: -f2)
+          done < <(git ls-files -- 'Dockerfile' '*/Dockerfile' 'Dockerfile.*' '*.Dockerfile')
+          [ "$fail" = 0 ] && echo "Bun pins agree: $want"
+          exit "$fail"
+
+      - name: Setup Node
+        if: ${{ fromJSON(steps.detect.outputs.project) }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node_version }}
+
       - name: Setup Bun
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: ${{ inputs.bun_version }}
+        # No bun-version: setup-bun reads package.json "packageManager".
 
       - name: Cache Bun install cache
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
 
+      # Every committed bun.lock (e.g. a CDK app in infra/), not just the root:
+      # a lockfile Bun rejects must fail here, not after merge.
       - name: Install
         if: ${{ fromJSON(steps.detect.outputs.project) }}
-        run: bun install --frozen-lockfile
+        run: |
+          git ls-files -- 'bun.lock' '*/bun.lock' | while IFS= read -r lock; do
+            dir="$(dirname "$lock")"
+            echo "::group::bun install --frozen-lockfile ($dir)"
+            (cd "$dir" && bun install --frozen-lockfile)
+            echo "::endgroup::"
+          done
 
       # Repo-specific extras, before the standard set.
       - name: Extra scripts
@@ -90,3 +138,47 @@ jobs:
       - name: Build
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: bun run build
+
+      # A repo that ships an image gets it built (not pushed) on every PR, so an
+      # update that breaks the image fails here rather than in the publish job.
+      - name: Build Docker image
+        if: ${{ fromJSON(steps.detect.outputs.docker) }}
+        run: docker build --pull --tag verify:${{ github.sha }} .
+
+      # Merges to main are mostly bots now, and GitHub only emails the actor
+      # about failed runs — so open (or update) an issue assigned to the owner.
+      - name: Alert on failure (main)
+        if: ${{ failure() && github.event_name == 'push' && github.ref_name == github.event.repository.default_branch }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          gh label create ci-failure --color B60205 \
+            --description "verify is failing on the default branch" --force >/dev/null
+          open="$(gh issue list --label ci-failure --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "Still failing at $GITHUB_SHA: $RUN_URL"
+          else
+            gh issue create --label ci-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
+              --title "verify failing on $BRANCH" \
+              --body "verify failed on \`$BRANCH\` at $GITHUB_SHA, so deploys are paused and every open PR's CI will fail until it's fixed.
+
+          Run: $RUN_URL
+
+          This issue closes itself when verify passes on \`$BRANCH\` again."
+          fi
+
+      - name: Close alert on recovery (main)
+        if: ${{ success() && github.event_name == 'push' && github.ref_name == github.event.repository.default_branch }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for n in $(gh issue list --label ci-failure --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "verify is passing again at $GITHUB_SHA: $RUN_URL"
+          done

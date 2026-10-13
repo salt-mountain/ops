@@ -3,8 +3,8 @@
 # bootstrap.sh — apply the salt-mountain repo baseline to a repo.
 #
 # Seeds the canonical config files (baseline/) and applies the repo *settings* a
-# template can't carry: branch protection, merge hygiene, security toggles, and
-# hardened Actions permissions. Every step is idempotent. Settings are
+# template can't carry: branch protection, auto-merge, merge hygiene, security
+# toggles, and hardened Actions permissions. Every step is idempotent. Settings are
 # re-asserted on every run; files are only added where missing. A file that
 # already exists but differs from the baseline is reported, never overwritten —
 # repos legitimately customise them (extra Dependabot directories, Prettier
@@ -110,13 +110,17 @@ gen_ci_yaml() {
     cat <<YAML
 name: CI
 
+# verify runs on PRs (the required check, so bot PRs only auto-merge on green)
+# and again on main, where it gates deploys: put deploy jobs in this workflow
+# with \`needs: verify\` and \`if: github.event_name == 'push'\`.
 on:
   pull_request:
   push:
     branches: [main]
 
 permissions:
-  contents: read$pr_perm
+  contents: read
+  issues: write # verify opens/closes an alert issue when main fails/recovers$pr_perm
 
 concurrency:
   group: ci-\${{ github.workflow }}-\${{ github.ref }}
@@ -185,9 +189,19 @@ seed_ci() {
 }
 
 seed_files() {
-  local ops_ref ops_tag
-  ops_ref="$(git -C "$OPS_DIR" rev-parse HEAD 2>/dev/null || echo main)"
+  local ops_ref ops_tag head
+  # Pin consumers to the latest release tag's commit, labelled with that tag,
+  # so the SHA and the "# vX" comment Dependabot reads always agree.
+  head="$(git -C "$OPS_DIR" rev-parse HEAD 2>/dev/null || echo main)"
   ops_tag="$(git -C "$OPS_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+  if [ -n "$ops_tag" ]; then
+    ops_ref="$(git -C "$OPS_DIR" rev-list -n 1 "$ops_tag")"
+    if [ "$ops_ref" != "$head" ]; then
+      echo "  ⚠ ops has commits after $ops_tag; new CI callers pin $ops_tag. Tag a release to roll those out."
+    fi
+  else
+    ops_ref="$head"
+  fi
 
   detect_framework
   echo "  • seeding baseline files (framework: $FRAMEWORK)"
@@ -232,9 +246,11 @@ apply_settings() {
   echo "  • applying repo settings"
 
   # Merge hygiene: squash-only, auto-delete branches, no merge/rebase commits.
+  # Auto-merge on: bot PRs (Dependabot via automerge.yml, Renovate natively)
+  # merge themselves once the required checks pass.
   gh api -X PATCH "repos/$SLUG" \
     -F allow_squash_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
-    -F delete_branch_on_merge=true -F allow_auto_merge=false >/dev/null
+    -F delete_branch_on_merge=true -F allow_auto_merge=true >/dev/null
 
   # Harden Actions: read-only default GITHUB_TOKEN; workflows can't approve PRs.
   gh api -X PUT "repos/$SLUG/actions/permissions/workflow" \
@@ -252,10 +268,26 @@ apply_settings() {
   fi
 
   # Branch protection. The reusable-workflow check reports as "verify / verify".
-  local contexts='"verify / verify"'
+  # A repo whose ci.yml doesn't call verify.yml yet keeps its current required
+  # checks, so open PRs aren't blocked waiting for a check that never reports.
+  local contexts='"verify / verify"' existing
+  if [ -e .github/workflows/ci.yml ] &&
+    ! grep -q "$OPS_SLUG/.github/workflows/verify.yml@" .github/workflows/ci.yml; then
+    existing="$(gh api "repos/$SLUG/branches/$DEFAULT_BRANCH/protection/required_status_checks" \
+      --jq '[.contexts[] | @json] | join(", ")' 2>/dev/null || true)"
+    if [ -n "$existing" ]; then
+      contexts="$existing"
+      echo "    keeping current required checks until ci.yml calls verify.yml"
+    fi
+  fi
+  # strict=false: PRs needn't be up to date with main to merge. With several
+  # bot PRs auto-merging, strict mode stalls every PR behind each merge (no
+  # merge queue on personal accounts). The trade-off — two green PRs that break
+  # main together — is caught by verify on main, which gates deploys and opens
+  # an alert issue.
   gh api -X PUT "repos/$SLUG/branches/$DEFAULT_BRANCH/protection" --input - >/dev/null <<JSON
 {
-  "required_status_checks": { "strict": true, "contexts": [ $contexts ] },
+  "required_status_checks": { "strict": false, "contexts": [ $contexts ] },
   "enforce_admins": false,
   "required_pull_request_reviews": { "required_approving_review_count": 0 },
   "restrictions": null,
@@ -301,6 +333,27 @@ check_scripts() {
   return 0
 }
 
+# ---- automation prerequisites the script can't create for you ----------------
+check_automation() {
+  local names
+  names="$(gh secret list --app dependabot --repo "$SLUG" --json name --jq '.[].name' 2>/dev/null || echo "?")"
+  if [ "$names" = "?" ]; then
+    echo "  • couldn't list Dependabot secrets — check AUTOMERGE_APP_CLIENT_ID / AUTOMERGE_APP_PRIVATE_KEY by hand"
+  elif printf '%s\n' "$names" | grep -qx AUTOMERGE_APP_CLIENT_ID &&
+    printf '%s\n' "$names" | grep -qx AUTOMERGE_APP_PRIVATE_KEY; then
+    echo "  ✓ Dependabot auto-merge secrets present"
+  else
+    echo "  ⚠ Dependabot auto-merge is a no-op until these Dependabot secrets exist:"
+    echo "      gh secret set AUTOMERGE_APP_CLIENT_ID --app dependabot --repo $SLUG"
+    echo "      gh secret set AUTOMERGE_APP_PRIVATE_KEY --app dependabot --repo $SLUG < key.pem"
+    echo "    and the auto-merge GitHub App is installed on this repo (see ops README)."
+  fi
+  echo "  • Renovate: once renovate.json is on $DEFAULT_BRANCH, make sure the Mend Renovate"
+  echo "    app is installed on $SLUG (https://github.com/apps/renovate). Installing it"
+  echo "    before renovate.json lands gets you an onboarding PR — close it unmerged."
+  return 0
+}
+
 # ---- run --------------------------------------------------------------------
 if $DO_FILES; then
   if seed_files; then commit_and_push; fi
@@ -312,5 +365,7 @@ if $DO_SETTINGS; then
   apply_settings
   setup_codeql
 fi
+
+check_automation
 
 echo "▸ done: https://github.com/$SLUG"
