@@ -13,7 +13,7 @@ on:
         description: "Node.js for tools with node shebangs (astro, vue-tsc). Match your deploy workflow."
         type: string
         required: false
-        default: "22"
+        default: "24"
       dependency_review:
         description: "Run dependency-review on PRs (public repos only; set by bootstrap)."
         type: boolean

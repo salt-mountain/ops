@@ -78,7 +78,8 @@ design. Test-less repos define a no-op `test`. Beyond those, `verify.yml`:
   `ci-failure` issue assigned to the owner; the next green run closes it. Merges
   are mostly bots, and GitHub only emails the actor about failed runs.
 
-Inputs: `node_version` (default `22`; match your deploy workflow),
+Inputs: `node_version` (default `24`, the current Active LTS; match your deploy
+workflow),
 `dependency_review` (public-only, set by visibility), and `extra_scripts`
 (additive — runs _on top of_ the standard set). Bun steps are gated on a
 `package.json` existing, so a project-less repo stays green.
