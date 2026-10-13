@@ -4,8 +4,14 @@
 #
 # Seeds the canonical config files (baseline/) and applies the repo *settings* a
 # template can't carry: branch protection, merge hygiene, security toggles, and
-# hardened Actions permissions. Every step is idempotent, so this doubles as a
-# drift-fixer — re-run it on an existing repo to bring it back to standard.
+# hardened Actions permissions. Every step is idempotent. Settings are
+# re-asserted on every run; files are only added where missing. A file that
+# already exists but differs from the baseline is reported, never overwritten —
+# repos legitimately customise them (extra Dependabot directories, Prettier
+# ignores, a CI caller with extra_scripts).
+#
+# Baseline files come in layers: baseline/common/ for every repo, plus
+# baseline/<framework>/ (astro or vue), auto-detected from package.json.
 #
 # Usage:
 #   ./bootstrap.sh <repo> [options]
@@ -15,7 +21,8 @@
 #   --public        Public repo: enables dependency-review + CodeQL + secret scanning.
 #   --private       Private repo (default).
 #   --owner <login> GitHub owner (default: salt-mountain).
-#   --no-files      Only apply settings; don't seed/sync baseline files.
+#   --framework <f> astro | vue | none (default: detect from package.json).
+#   --no-files      Only apply settings; don't seed baseline files.
 #   --no-settings   Only seed files; don't touch gh-api settings.
 #   -h, --help      Show this help.
 #
@@ -23,7 +30,7 @@
 # script reports any of those scripts missing from the target's package.json.
 #
 # Examples:
-#   ./bootstrap.sh my-new-site --create --public
+#   ./bootstrap.sh my-new-site --create --public --framework astro
 #   ./bootstrap.sh mogarmory --private      # re-apply baseline to an existing repo
 #
 set -euo pipefail
@@ -40,8 +47,10 @@ VISIBILITY="private"
 CREATE=false
 DO_FILES=true
 DO_SETTINGS=true
+FRAMEWORK="" # empty = detect from package.json
 
-usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+# Print the header comment block (line 2 up to the first non-comment line).
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +58,7 @@ while [ $# -gt 0 ]; do
     --public) VISIBILITY="public" ;;
     --private) VISIBILITY="private" ;;
     --owner) OWNER="$2"; shift ;;
+    --framework) FRAMEWORK="${2:-}"; shift ;;
     --no-files) DO_FILES=false ;;
     --no-settings) DO_SETTINGS=false ;;
     -h|--help) usage; exit 0 ;;
@@ -59,11 +69,16 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$REPO" ] || { echo "error: repo name required" >&2; usage; exit 2; }
+case "$FRAMEWORK" in
+  "" | astro | vue | none) ;;
+  *) echo "error: --framework must be astro, vue or none (got '$FRAMEWORK')" >&2; exit 2 ;;
+esac
 SLUG="$OWNER/$REPO"
 
 # ---- preflight --------------------------------------------------------------
 command -v gh >/dev/null || { echo "error: gh CLI required" >&2; exit 1; }
 command -v git >/dev/null || { echo "error: git required" >&2; exit 1; }
+command -v jq >/dev/null || { echo "error: jq required" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "error: run 'gh auth login' first" >&2; exit 1; }
 
 echo "▸ bootstrapping $SLUG  (visibility=$VISIBILITY create=$CREATE)"
@@ -121,17 +136,74 @@ YAML
 }
 
 # ---- seed files -------------------------------------------------------------
+SEED_REPORT="" # one line per added/kept file; also used as the PR body
+
+report() {
+  SEED_REPORT+="$1"$'\n'
+  echo "    $1"
+}
+
+# Pick the framework layer: --framework wins, else detect from package.json.
+detect_framework() {
+  [ -n "$FRAMEWORK" ] && return 0
+  if [ ! -f package.json ]; then
+    FRAMEWORK="none"
+    return 0
+  fi
+  FRAMEWORK="$(jq -r '((.dependencies // {}) + (.devDependencies // {})) as $d
+    | if ($d | has("astro")) then "astro" elif ($d | has("vue")) then "vue" else "none" end' \
+    package.json 2>/dev/null || echo none)"
+}
+
+# Copy baseline/<layer>/ files that are missing. Never overwrite: a file that
+# exists but differs is reported so a human can decide whether to reconcile.
+seed_layer() {
+  local layer="$1" src rel
+  [ -d "$BASELINE/$layer" ] || return 0
+  while IFS= read -r src; do
+    rel="${src#"$BASELINE/$layer/"}"
+    if [ ! -e "$rel" ]; then
+      mkdir -p "$(dirname "$rel")"
+      cp "$src" "$rel"
+      report "added  $rel"
+    elif ! cmp -s "$src" "$rel"; then
+      report "kept   $rel (differs from baseline/$layer/ — review by hand)"
+    fi
+  done < <(find "$BASELINE/$layer" -type f | sort)
+}
+
+# Generate the CI caller only if the repo has none. An existing caller keeps its
+# inputs (extra_scripts etc.); its ops ref is bumped by the repo's Dependabot.
+seed_ci() {
+  local ci=".github/workflows/ci.yml"
+  if [ ! -e "$ci" ]; then
+    gen_ci_yaml "$1" "$2"
+    report "added  $ci"
+  elif ! grep -q "$OPS_SLUG/.github/workflows/verify.yml@" "$ci"; then
+    report "kept   $ci (doesn't call $OPS_SLUG verify.yml — migrate by hand)"
+  fi
+}
+
 seed_files() {
   local ops_ref ops_tag
   ops_ref="$(git -C "$OPS_DIR" rev-parse HEAD 2>/dev/null || echo main)"
   ops_tag="$(git -C "$OPS_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
 
-  cp -R "$BASELINE/." .
-  gen_ci_yaml "$ops_ref" "$ops_tag"
+  detect_framework
+  echo "  • seeding baseline files (framework: $FRAMEWORK)"
+  if [ "$FRAMEWORK" = "none" ]; then
+    echo "    no astro/vue dependency found — pass --framework to seed Prettier/editor configs"
+  fi
+
+  seed_layer common
+  if [ "$FRAMEWORK" != "none" ]; then
+    seed_layer "$FRAMEWORK"
+  fi
+  seed_ci "$ops_ref" "$ops_tag"
 
   git add -A
   if git diff --cached --quiet; then
-    echo "  • files already up to date"
+    echo "  • no missing baseline files"
     return 1 # nothing to commit
   fi
   return 0
@@ -143,13 +215,14 @@ commit_and_push() {
     git push -q -u origin "$DEFAULT_BRANCH"
     echo "  ✓ baseline committed to $DEFAULT_BRANCH"
   else
-    local b="chore/baseline-sync"
+    local b="chore/baseline-sync" fence='```' body
+    body="$(printf 'Adds missing salt-mountain baseline files (framework: %s). Existing files are never overwritten; any that differ from the baseline are listed as **kept** for review.\n\n%s\n%s%s\n' \
+      "$FRAMEWORK" "$fence" "$SEED_REPORT" "$fence")"
     git checkout -q -b "$b"
     git commit -q -m "chore: sync salt-mountain repo baseline"
     git push -q -u origin "$b"
     gh pr create --repo "$SLUG" --base "$DEFAULT_BRANCH" --head "$b" \
-      --title "chore: sync repo baseline" \
-      --body "Re-applies the current salt-mountain baseline (configs + CI caller)." >/dev/null
+      --title "chore: sync repo baseline" --body "$body" >/dev/null
     echo "  ✓ baseline opened as a PR (existing repo, main is protected)"
   fi
 }
@@ -214,7 +287,8 @@ check_scripts() {
     return 0
   fi
   local missing
-  missing="$(node -e 'const s=(require("./package.json").scripts)||{}; process.stdout.write(["format:check","check","test","build"].filter(k=>!s[k]).join(" "))' 2>/dev/null || echo "?")"
+  missing="$(jq -r '(.scripts // {}) as $s | ["format:check", "check", "test", "build"]
+    | map(select($s[.] == null)) | join(" ")' package.json 2>/dev/null || echo "?")"
   if [ "$missing" = "?" ]; then
     echo "  • couldn't read package.json scripts — verify by hand: format:check, check, test, build"
   elif [ -n "$missing" ]; then

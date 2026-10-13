@@ -8,22 +8,32 @@ DevOps foundation every repo starts from and stays aligned to.
 | Path | Role |
 | --- | --- |
 | `.github/workflows/verify.yml` | The **reusable CI** every repo calls — build, format, typecheck, test, dependency-review |
-| `baseline/` | The **config files** seeded into each repo (Dependabot, Prettier, EditorConfig, `.vscode`, CODEOWNERS) |
+| `baseline/` | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Prettier ignores, EditorConfig, CODEOWNERS) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
 | `bootstrap.sh` | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, merge hygiene, security toggles, hardened Actions permissions |
 
 ## Using it
 
 ```sh
-./bootstrap.sh my-new-site --create --public   # new repo, fully hardened
-./bootstrap.sh mogarmory --private             # re-apply to an existing repo (opens a PR)
+./bootstrap.sh my-new-site --create --public --framework astro   # new repo, fully hardened
+./bootstrap.sh mogarmory --private                                # re-apply to an existing repo (opens a PR)
 ```
 
 `bootstrap.sh` is idempotent — the same command bootstraps a new repo or
-re-asserts the standard on an existing one (the drift-fixer). New repos get the
-baseline on their default branch and protected; existing protected repos get it
-as a PR. It also reports any required CI scripts missing from the target's
-`package.json`. Flags: `--create`, `--public`/`--private`, `--owner <login>`,
-`--no-files`, `--no-settings`.
+re-asserts the standard on an existing one. Settings are re-applied on every
+run. Files are **only added where missing, never overwritten**: repos
+legitimately customise them (extra Dependabot directories, Prettier ignores, a
+CI caller with `extra_scripts`), so any existing file that differs from the
+baseline is listed as `kept` for you to reconcile by hand. An existing
+`ci.yml` that doesn't call `verify.yml` yet is kept too — migrate it manually.
+The framework layer is detected from `package.json` (`astro`, else `vue`);
+override with `--framework astro|vue|none`, e.g. for a brand-new repo with no
+`package.json` yet.
+
+New repos get the baseline on their default branch and protected; existing
+protected repos get it as a PR. It also reports any required CI scripts missing
+from the target's `package.json`. Flags: `--create`, `--public`/`--private`,
+`--owner <login>`, `--framework <f>`, `--no-files`, `--no-settings`. Requires
+`gh`, `git` and `jq`.
 
 A consumer ends up with the seeded configs plus a thin CI caller pinned to this
 repo's reusable workflow:
