@@ -1,15 +1,17 @@
 # ops
 
 Single source of truth for the **salt-mountain repo baseline** — the security &
-DevOps foundation every repo starts from and stays aligned to.
+DevOps foundation every repo starts from and stays aligned to. The goal: version
+updates and CVE fixes merge and deploy themselves when CI is green, and a human
+is only needed when something genuinely breaks.
 
 ## What's here
 
-| Path | Role |
-| --- | --- |
-| `.github/workflows/verify.yml` | The **reusable CI** every repo calls — build, format, typecheck, test, dependency-review |
-| `baseline/` | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Prettier ignores, EditorConfig, CODEOWNERS) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
-| `bootstrap.sh` | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, merge hygiene, security toggles, hardened Actions permissions |
+| Path                           | Role                                                                                                                                                                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/verify.yml` | The **reusable CI** every repo calls on PRs and on `main` — Bun pin check, install, format, typecheck, test, build, Docker image build, dependency-review, failure alerts                                                                             |
+| `baseline/`                    | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Renovate, the Dependabot auto-merge workflow, Prettier ignores, EditorConfig, CODEOWNERS) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
+| `bootstrap.sh`                 | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, auto-merge, merge hygiene, security toggles, hardened Actions permissions                                                                                  |
 
 ## Using it
 
@@ -21,48 +23,121 @@ DevOps foundation every repo starts from and stays aligned to.
 `bootstrap.sh` is idempotent — the same command bootstraps a new repo or
 re-asserts the standard on an existing one. Settings are re-applied on every
 run. Files are **only added where missing, never overwritten**: repos
-legitimately customise them (extra Dependabot directories, Prettier ignores, a
-CI caller with `extra_scripts`), so any existing file that differs from the
-baseline is listed as `kept` for you to reconcile by hand. An existing
-`ci.yml` that doesn't call `verify.yml` yet is kept too — migrate it manually.
-The framework layer is detected from `package.json` (`astro`, else `vue`);
-override with `--framework astro|vue|none`, e.g. for a brand-new repo with no
-`package.json` yet.
+legitimately customise them (extra Dependabot directories, Renovate rules,
+Prettier ignores, a CI caller with `extra_scripts`), so any existing file that
+differs from the baseline is listed as `kept` for you to reconcile by hand. An
+existing `ci.yml` that doesn't call `verify.yml` yet is kept too — migrate it
+manually; until then the repo keeps its current required checks. The framework
+layer is detected from `package.json` (`astro`, else `vue`); override with
+`--framework astro|vue|none`, e.g. for a brand-new repo with no `package.json`
+yet.
 
 New repos get the baseline on their default branch and protected; existing
-protected repos get it as a PR. It also reports any required CI scripts missing
-from the target's `package.json`. Flags: `--create`, `--public`/`--private`,
+protected repos get it as a PR. It also reports missing required CI scripts and
+missing auto-merge secrets. Flags: `--create`, `--public`/`--private`,
 `--owner <login>`, `--framework <f>`, `--no-files`, `--no-settings`. Requires
 `gh`, `git` and `jq`.
 
-A consumer ends up with the seeded configs plus a thin CI caller pinned to this
-repo's reusable workflow:
+A consumer ends up with the seeded configs plus a thin CI caller pinned to a
+release of this repo's reusable workflow:
 
 ```yaml
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write # failure alert issue
+  pull-requests: write # public repos only: dependency-review comment
+
 jobs:
   verify:
-    uses: salt-mountain/ops/.github/workflows/verify.yml@<sha> # v1
+    uses: salt-mountain/ops/.github/workflows/verify.yml@<sha> # v1.1.0
     with:
-      dependency_review: true # public repos only; private repos have no `with:`
+      dependency_review: true # public repos only
+
+  deploy: # repos that deploy: only after verify passes on main
+    needs: verify
+    if: github.event_name == 'push'
+    # ...
 ```
 
 Every repo runs the **same** checks — `format:check`, `check`, `test`, `build` —
 so they are **not** toggleable; a repo missing one of those scripts fails CI by
-design (the standard being enforced). Test-less repos define a no-op `test`, and
-`bootstrap.sh` flags any missing scripts when you baseline a repo. The only
-inputs are `bun_version` (the fleet's CI Bun version — single source, bump in
-`verify.yml`), `dependency_review` (public-only, set by visibility), and
-`extra_scripts` (additive — runs *on top of* the standard set). Bun steps are
-gated on a `package.json` existing, so a project-less repo stays green.
+design. Test-less repos define a no-op `test`. Beyond those, `verify.yml`:
 
-## How pins stay current (no hand-bumping)
+- **Checks the Bun pins agree.** `package.json` `packageManager` is the repo's
+  one Bun version (setup-bun and deploy workflows read it); `.bun-version` and
+  any `oven/bun:<version>` Dockerfile tag must match it.
+- **Installs every committed `bun.lock`** with `--frozen-lockfile` (e.g. a CDK
+  app in `infra/`), not just the root.
+- **Builds the Docker image** (no push) if the repo has a root `Dockerfile`.
+- **Alerts on `main`.** A failed run on `main` opens (or comments on) a
+  `ci-failure` issue assigned to the owner; the next green run closes it. Merges
+  are mostly bots, and GitHub only emails the actor about failed runs.
 
-Every pinned action lives only in `.github/workflows/` here, so this repo's
-Dependabot keeps the whole fleet's pins fresh in one PR. Consumers pin the
-reusable workflow by SHA with a `# v1` comment, so their own Dependabot bumps it
-when this repo cuts a new release. Roll out a baseline change by tagging a
-release; consumers update via a reviewed Dependabot PR. (The CI Bun version lives
-in `verify.yml`, so it rides this same flow.)
+Inputs: `node_version` (default `24`, the current Active LTS; match your deploy
+workflow),
+`dependency_review` (public-only, set by visibility), and `extra_scripts`
+(additive — runs _on top of_ the standard set). Bun steps are gated on a
+`package.json` existing, so a project-less repo stays green.
+
+## How updates flow
+
+| Who                         | What                                                                                                                                      | Auto-merges   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| Dependabot security updates | CVE fixes in packages (no cooldown)                                                                                                       | patch + minor |
+| Dependabot version updates  | packages and GitHub Actions pins, grouped into one PR per run, after a 7-day cooldown (30 for majors)                                     | patch + minor |
+| Renovate (Mend app)         | version strings Dependabot can't see — Bun pins by default, plus whatever a repo adds to its `renovate.json` — after the same release age | Bun patches   |
+
+Majors (and Bun minors) always wait for a human. Auto-merge only ever merges a
+green PR, so a breaking update becomes a red PR to look at, never a broken
+`main`.
+
+Branch protection requires `verify / verify` but **not** up-to-date branches:
+with several bot PRs auto-merging, strict mode would stall every PR behind each
+merge, and merge queues aren't available on personal accounts. The trade-off is
+that two individually green PRs can break `main` together. `verify` on `main`
+catches that before any deploy runs, and opens the alert issue; open PRs' CI
+then fails until `main` is fixed, so auto-merge pauses rather than piling on.
+
+Each repo owns its `renovate.json` (seeded from `baseline/common/`), so
+baseline changes to it don't propagate — re-run `bootstrap.sh` to see which
+repos differ, and reconcile by hand.
+
+Action pins in `verify.yml` are kept current by this repo's Dependabot.
+Consumers pin `verify.yml` by SHA with a `# vX.Y.Z` comment, which their
+Dependabot bumps when this repo tags a release. Roll out a `verify.yml` change
+by tagging a release.
+
+## One-time setup
+
+**Mend Renovate app.** Install https://github.com/apps/renovate on the repos
+that should get Renovate PRs ("Only select repositories"). Do it after the
+repo's `renovate.json` is on `main`; otherwise Mend opens an onboarding PR with
+its own defaults — close that unmerged.
+
+**Auto-merge GitHub App** (Dependabot can't merge its own PRs, and a merge
+enabled with `GITHUB_TOKEN` doesn't trigger the push workflows that verify and
+deploy `main`):
+
+1. https://github.com/settings/apps/new — any name (e.g.
+   `salt-mountain-automerge`), any homepage URL, **uncheck** Webhook "Active".
+2. Repository permissions: **Contents**, **Pull requests** and **Workflows**:
+   read and write. Nothing else. "Only on this account".
+3. Create it, note the **Client ID**, and generate a **private key** (`.pem`).
+4. Install it on the same repos ("Only select repositories").
+5. Per repo, store both as **Dependabot** secrets (Dependabot-triggered
+   workflows can't read Actions secrets):
+
+   ```sh
+   gh secret set AUTOMERGE_APP_CLIENT_ID --app dependabot --repo salt-mountain/<repo>
+   gh secret set AUTOMERGE_APP_PRIVATE_KEY --app dependabot --repo salt-mountain/<repo> < key.pem
+   ```
+
+Without the secrets, `automerge.yml` warns and does nothing.
 
 ## Notes
 

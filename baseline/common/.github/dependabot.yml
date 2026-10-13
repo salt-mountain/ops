@@ -21,6 +21,18 @@ updates:
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+    # Batch non-major updates into one PR per run so fewer PRs race each other
+    # to main (auto-merge doesn't require up-to-date branches). Majors stay
+    # separate PRs for a human; .github/workflows/automerge.yml merges the rest.
+    groups:
+      bun-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      bun-security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -29,3 +41,8 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
