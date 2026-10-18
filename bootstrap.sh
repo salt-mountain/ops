@@ -303,11 +303,18 @@ setup_codeql() {
     echo "  • CodeQL: skipped (private repo needs GitHub Advanced Security)"
     return
   fi
-  if gh api --silent -X PUT "repos/$SLUG/code-scanning/default-setup" \
+  # Reading the state works with the plain `repo` scope; changing it needs
+  # `security_events`, so only try (and only warn) when it's actually off.
+  local state
+  state="$(gh api "repos/$SLUG/code-scanning/default-setup" --jq .state 2>/dev/null || true)"
+  if [ "$state" = "configured" ]; then
+    echo "  ✓ CodeQL default setup already enabled"
+  elif gh api --silent -X PUT "repos/$SLUG/code-scanning/default-setup" \
       -f state=configured >/dev/null 2>&1; then
     echo "  ✓ CodeQL default setup enabled"
   else
-    echo "  • CodeQL: enable via UI (token likely lacks 'security_events' scope):"
+    echo "  ⚠ CodeQL default setup is off and couldn't be enabled (token likely lacks"
+    echo "    'security_events' scope). Enable it in the UI:"
     echo "      https://github.com/$SLUG/settings/security_analysis"
   fi
 }

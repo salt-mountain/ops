@@ -131,13 +131,15 @@ jobs:
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: bun run check
 
-      - name: Test
-        if: ${{ fromJSON(steps.detect.outputs.project) }}
-        run: bun run test
-
+      # Build runs before Test so tests can check the built output (e.g. smoke
+      # tests over dist/); unit tests don't care about the order.
       - name: Build
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: bun run build
+
+      - name: Test
+        if: ${{ fromJSON(steps.detect.outputs.project) }}
+        run: bun run test
 
       # A repo that ships an image gets it built (not pushed) on every PR, so an
       # update that breaks the image fails here rather than in the publish job.

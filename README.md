@@ -9,7 +9,7 @@ is only needed when something genuinely breaks.
 
 | Path                           | Role                                                                                                                                                                                                                                                  |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/verify.yml` | The **reusable CI** every repo calls on PRs and on `main` — Bun pin check, install, format, typecheck, test, build, Docker image build, dependency-review, failure alerts                                                                             |
+| `.github/workflows/verify.yml` | The **reusable CI** every repo calls on PRs and on `main` — Bun pin check, install, format, typecheck, build, test, Docker image build, dependency-review, failure alerts                                                                             |
 | `baseline/`                    | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Renovate, the Dependabot auto-merge workflow, Prettier ignores, EditorConfig, CODEOWNERS) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
 | `bootstrap.sh`                 | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, auto-merge, merge hygiene, security toggles, hardened Actions permissions                                                                                  |
 
@@ -64,9 +64,12 @@ jobs:
     # ...
 ```
 
-Every repo runs the **same** checks — `format:check`, `check`, `test`, `build` —
-so they are **not** toggleable; a repo missing one of those scripts fails CI by
-design. Test-less repos define a no-op `test`. Beyond those, `verify.yml`:
+Every repo runs the **same** checks — `format:check`, `check`, `build`, `test`,
+in that order — so they are **not** toggleable; a repo missing one of those
+scripts fails CI by design. `build` runs before `test` so tests can check the
+built output (e.g. smoke tests over `dist/`). Prefer real smoke tests over a
+no-op `test`: bot updates auto-merge and deploy on green, so "it built" should
+mean "the site works". Beyond those, `verify.yml`:
 
 - **Checks the Bun pins agree.** `package.json` `packageManager` is the repo's
   one Bun version (setup-bun and deploy workflows read it); `.bun-version` and
