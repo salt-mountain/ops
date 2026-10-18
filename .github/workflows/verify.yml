@@ -217,3 +217,21 @@ jobs:
           for n in $(gh issue list --label ci-failure --state open --json number --jq '.[].number'); do
             gh issue close "$n" --comment "verify is passing again at $GITHUB_SHA: $RUN_URL"
           done
+
+      # A bot PR that fails verify just sits open: it won't auto-merge, and
+      # GitHub only emails the actor about failed runs. Assigning the owner
+      # sends one email per broken bot PR (re-assigning is a no-op, so reruns
+      # don't repeat it). Green bot PRs merge silently.
+      - name: Flag failed bot PR to the owner
+        if: >-
+          ${{ failure() && github.event_name == 'pull_request' &&
+          contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.event.pull_request.user.login) }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --silent -X POST "repos/$GH_REPO/issues/$PR_NUMBER/assignees" \
+            -f "assignees[]=$GITHUB_REPOSITORY_OWNER"
+          echo "Assigned $GITHUB_REPOSITORY_OWNER to #$PR_NUMBER"
