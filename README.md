@@ -92,12 +92,15 @@ mean "the site works". Beyond those, `verify.yml`:
 - **Alerts on `main`.** A failed run on `main` opens (or comments on) a
   `ci-failure` issue assigned to the owner; the next green run closes it. Merges
   are mostly bots, and GitHub only emails the actor about failed runs.
-- **Flags failed bot PRs.** When verify fails on a Dependabot or Renovate PR,
-  the owner is assigned to it: one email per broken bot PR, none for the ones
-  that merge. With the repo watched as "Participating and @mentions", these
-  assignments and the `ci-failure` issues are the only bot emails you get. The
-  baseline has no CODEOWNERS for the same reason (every review request emails);
-  add one by hand to repos that take outside contributions.
+- **Reports failed bot PRs.** When verify fails on a Dependabot or Renovate
+  PR, it posts one comment that @mentions the owner, with the failed step, the
+  last lines of its output and a link to the run, so the single email already
+  says what broke. Later failures edit that comment (no new email); a later
+  green run marks it resolved. The `ci-failure` issue on `main` carries the same
+  summary. With repos watched as "Participating and @mentions", these are the
+  only bot emails you get. The baseline has no CODEOWNERS for the same reason
+  (every review request emails); add one by hand to repos that take outside
+  contributions.
 
 Inputs: `node_version` (default `24`, the current Active LTS; match your deploy
 workflow),

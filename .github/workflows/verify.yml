@@ -49,6 +49,52 @@ jobs:
           echo "project=${{ hashFiles('package.json') != '' }}" >> "$GITHUB_OUTPUT"
           echo "docker=${{ hashFiles('Dockerfile') != '' }}" >> "$GITHUB_OUTPUT"
 
+      # Steps below that run our own commands source this first, so a failure
+      # can be reported with its step name and output (a later step can't read
+      # an earlier step's log through the API while the job is still running).
+      # It records the step as running and tees its output to a file; on success
+      # the marker is removed, so after a failure it names the step that failed.
+      - name: Prepare step logs
+        run: |
+          cat >"$RUNNER_TEMP/verify-step.sh" <<'EOF'
+          # Usage (top of a step): . "$RUNNER_TEMP/verify-step.sh" "<step name>"
+          VERIFY_STEP_DIR="$RUNNER_TEMP/verify-step"
+          mkdir -p "$VERIFY_STEP_DIR"
+          printf '%s\n' "$1" >"$VERIFY_STEP_DIR/name"
+          exec 3>&1 4>&2
+          exec > >(tee "$VERIFY_STEP_DIR/log") 2>&1
+          verify_tee_pid=$!
+          verify_step_done() {
+            local rc=$?
+            # Restore the real stdout/stderr so tee sees EOF, then let it flush.
+            exec 1>&3 2>&4 3>&- 4>&-
+            wait "$verify_tee_pid" 2>/dev/null || true
+            if [ "$rc" = 0 ]; then rm -f "$VERIFY_STEP_DIR/name"; fi
+            exit "$rc"
+          }
+          trap verify_step_done EXIT
+          EOF
+
+          # Prints a Markdown summary of the failed step for comments/issues.
+          cat >"$RUNNER_TEMP/verify-failure.sh" <<'EOF'
+          dir="$RUNNER_TEMP/verify-step"
+          if [ -f "$dir/name" ]; then
+            printf '**Failed step:** %s\n' "$(cat "$dir/name")"
+            # Last 40 lines, colour codes and log-group markers stripped, long
+            # lines cut, and backtick runs shortened so nothing escapes the
+            # code fence (inside it, @mentions and Markdown stay inert).
+            # shellcheck disable=SC2016 # literal backticks (Markdown), not expansions
+            excerpt="$(sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g; /^::(group|endgroup)::/d; s/`{3,}/``/g' "$dir/log" |
+              cut -c1-300 | tail -n 40)"
+            if [ -n "$excerpt" ]; then
+              # shellcheck disable=SC2016
+              printf '\n<details open><summary>Last lines of output</summary>\n\n```text\n%s\n```\n\n</details>\n' "$excerpt"
+            fi
+          else
+            printf '**Failed step:** a step without captured output (checkout, Node/Bun setup, cache or dependency review); see the run.\n'
+          fi
+          EOF
+
       - name: Dependency review
         if: ${{ inputs.dependency_review && github.event_name == 'pull_request' }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
@@ -62,6 +108,7 @@ jobs:
       - name: Check Bun pins agree
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Check Bun pins agree"
           pm="$(jq -r '.packageManager // ""' package.json)"
           case "$pm" in
             bun@*) want="${pm#bun@}"; want="${want%%+*}" ;;
@@ -106,8 +153,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-
 
-      # Every committed bun.lock (e.g. a CDK app in infra/), not just the root:
-      # a lockfile Bun rejects must fail here, not after merge.
       # Build-time values from the caller (validated: one KEY=VALUE per line,
       # shell-style uppercase keys, nothing that changes how tools run).
       - name: Build env
@@ -115,6 +160,7 @@ jobs:
         env:
           BUILD_ENV: ${{ inputs.build_env }}
         run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Build env"
           while IFS= read -r line; do
             line="${line%$'\r'}"
             case "$line" in "" | "#"*) continue ;; esac
@@ -133,9 +179,12 @@ jobs:
             echo "set $key"
           done <<<"$BUILD_ENV"
 
+      # Every committed bun.lock (e.g. a CDK app in infra/), not just the root:
+      # a lockfile Bun rejects must fail here, not after merge.
       - name: Install
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Install"
           git ls-files -- 'bun.lock' '*/bun.lock' | while IFS= read -r lock; do
             dir="$(dirname "$lock")"
             echo "::group::bun install --frozen-lockfile ($dir)"
@@ -149,6 +198,7 @@ jobs:
         env:
           EXTRA_SCRIPTS: ${{ inputs.extra_scripts }}
         run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Extra scripts"
           for s in $EXTRA_SCRIPTS; do
             echo "::group::bun run $s"
             bun run "$s"
@@ -158,27 +208,37 @@ jobs:
       # Standard set — runs on every repo.
       - name: Format check
         if: ${{ fromJSON(steps.detect.outputs.project) }}
-        run: bun run format:check
+        run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Format check"
+          bun run format:check
 
       - name: Typecheck
         if: ${{ fromJSON(steps.detect.outputs.project) }}
-        run: bun run check
+        run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Typecheck"
+          bun run check
 
       # Build runs before Test so tests can check the built output (e.g. smoke
       # tests over dist/); unit tests don't care about the order.
       - name: Build
         if: ${{ fromJSON(steps.detect.outputs.project) }}
-        run: bun run build
+        run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Build"
+          bun run build
 
       - name: Test
         if: ${{ fromJSON(steps.detect.outputs.project) }}
-        run: bun run test
+        run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Test"
+          bun run test
 
       # A repo that ships an image gets it built (not pushed) on every PR, so an
       # update that breaks the image fails here rather than in the publish job.
       - name: Build Docker image
         if: ${{ fromJSON(steps.detect.outputs.docker) }}
-        run: docker build --pull --tag verify:${{ github.sha }} .
+        run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Build Docker image"
+          docker build --pull --tag "verify:$GITHUB_SHA" .
 
       # Merges to main are mostly bots now, and GitHub only emails the actor
       # about failed runs — so open (or update) an issue assigned to the owner.
@@ -193,15 +253,20 @@ jobs:
         run: |
           gh label create ci-failure --color B60205 \
             --description "verify is failing on the default branch" --force >/dev/null
+          summary="$(bash "$RUNNER_TEMP/verify-failure.sh")"
           open="$(gh issue list --label ci-failure --state open --json number --jq '.[0].number // empty')"
           if [ -n "$open" ]; then
-            gh issue comment "$open" --body "Still failing at $GITHUB_SHA: $RUN_URL"
+            gh issue comment "$open" --body "Still failing at $GITHUB_SHA: $RUN_URL
+
+          $summary"
           else
             gh issue create --label ci-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
               --title "verify failing on $BRANCH" \
               --body "verify failed on \`$BRANCH\` at $GITHUB_SHA, so deploys are paused and every open PR's CI will fail until it's fixed.
 
           Run: $RUN_URL
+
+          $summary
 
           This issue closes itself when verify passes on \`$BRANCH\` again."
           fi
@@ -219,10 +284,12 @@ jobs:
           done
 
       # A bot PR that fails verify just sits open: it won't auto-merge, and
-      # GitHub only emails the actor about failed runs. Assigning the owner
-      # sends one email per broken bot PR (re-assigning is a no-op, so reruns
-      # don't repeat it). Green bot PRs merge silently.
-      - name: Flag failed bot PR to the owner
+      # GitHub only emails the actor about failed runs. One comment that
+      # @mentions the owner sends a single email that already says what broke.
+      # Later failures edit that comment instead of posting again (edits don't
+      # email), and a later green run marks it resolved. Green bot PRs that
+      # never failed stay silent.
+      - name: Report failed bot PR to the owner
         if: >-
           ${{ failure() && github.event_name == 'pull_request' &&
           contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.event.pull_request.user.login) }}
@@ -231,7 +298,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gh api --silent -X POST "repos/$GH_REPO/issues/$PR_NUMBER/assignees" \
-            -f "assignees[]=$GITHUB_REPOSITORY_OWNER"
-          echo "Assigned $GITHUB_REPOSITORY_OWNER to #$PR_NUMBER"
+          marker='<!-- salt-mountain/ops verify -->'
+          body="$RUNNER_TEMP/verify-comment.md"
+          {
+            printf '%s\n' "$marker"
+            printf '@%s verify failed on this PR, so it will not auto-merge.\n\n' "$GITHUB_REPOSITORY_OWNER"
+            printf '**Commit:** %s\n**Run:** %s\n\n' "$HEAD_SHA" "$RUN_URL"
+            bash "$RUNNER_TEMP/verify-failure.sh"
+          } >"$body"
+          id="$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"
+          if [ -n "$id" ]; then
+            gh api --silent -X PATCH "repos/$GH_REPO/issues/comments/$id" -F "body=@$body"
+            echo "Updated comment $id on #$PR_NUMBER"
+          else
+            gh api --silent -X POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -F "body=@$body"
+            echo "Commented on #$PR_NUMBER"
+          fi
+
+      - name: Mark bot PR failure resolved
+        if: >-
+          ${{ success() && github.event_name == 'pull_request' &&
+          contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.event.pull_request.user.login) }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker='<!-- salt-mountain/ops verify -->'
+          id="$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"
+          if [ -n "$id" ]; then
+            printf '%s\nverify passed again at %s: %s\n' "$marker" "$HEAD_SHA" "$RUN_URL" >"$RUNNER_TEMP/verify-comment.md"
+            gh api --silent -X PATCH "repos/$GH_REPO/issues/comments/$id" -F "body=@$RUNNER_TEMP/verify-comment.md"
+            echo "Marked comment $id resolved"
+          fi
