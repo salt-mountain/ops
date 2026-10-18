@@ -41,6 +41,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+      # Our own reusable workflow (salt-mountain/ops verify.yml): skip the
+      # supply-chain age gate so tagged ops releases roll out on the next run.
+      exclude: ["salt-mountain/ops*"]
     groups:
       actions-minor-patch:
         applies-to: version-updates
