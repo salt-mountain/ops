@@ -7,12 +7,12 @@ is only needed when something genuinely breaks.
 
 ## What's here
 
-| Path                           | Role                                                                                                                                                                                                                                                  |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/verify.yml` | The **reusable CI** every repo calls on PRs and on `main` — Bun pin check, install, format, typecheck, build, test, Docker image build, dependency-review, failure alerts                                                                             |
-| `baseline/`                    | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Renovate, the Dependabot auto-merge workflow, Prettier ignores, EditorConfig, CODEOWNERS) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
-| `bootstrap.sh`                 | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, auto-merge, merge hygiene, security toggles, hardened Actions permissions. `--dry-run` previews without changing anything                                  |
-| `set-automerge-secrets.sh`     | Stores the auto-merge app's credentials as Dependabot secrets on one or more repos                                                                                                                                                                    |
+| Path                           | Role                                                                                                                                                                                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/verify.yml` | The **reusable CI** every repo calls on PRs and on `main` — Bun pin check, install, format, typecheck, build, test, Docker image build, dependency-review, failure alerts                                                                 |
+| `baseline/`                    | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Renovate, the Dependabot auto-merge workflow, Prettier ignores, EditorConfig) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
+| `bootstrap.sh`                 | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, auto-merge, merge hygiene, security toggles, hardened Actions permissions. `--dry-run` previews without changing anything                      |
+| `set-automerge-secrets.sh`     | Stores the auto-merge app's credentials as Dependabot secrets on one or more repos                                                                                                                                                        |
 
 ## Using it
 
@@ -92,6 +92,12 @@ mean "the site works". Beyond those, `verify.yml`:
 - **Alerts on `main`.** A failed run on `main` opens (or comments on) a
   `ci-failure` issue assigned to the owner; the next green run closes it. Merges
   are mostly bots, and GitHub only emails the actor about failed runs.
+- **Flags failed bot PRs.** When verify fails on a Dependabot or Renovate PR,
+  the owner is assigned to it: one email per broken bot PR, none for the ones
+  that merge. With the repo watched as "Participating and @mentions", these
+  assignments and the `ci-failure` issues are the only bot emails you get. The
+  baseline has no CODEOWNERS for the same reason (every review request emails);
+  add one by hand to repos that take outside contributions.
 
 Inputs: `node_version` (default `24`, the current Active LTS; match your deploy
 workflow),
