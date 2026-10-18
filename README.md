@@ -95,9 +95,12 @@ mean "the site works". Beyond those, `verify.yml`:
 
 Inputs: `node_version` (default `24`, the current Active LTS; match your deploy
 workflow),
-`dependency_review` (public-only, set by visibility), and `extra_scripts`
-(additive — runs _on top of_ the standard set). Bun steps are gated on a
-`package.json` existing, so a project-less repo stays green.
+`dependency_review` (public-only, set by visibility), `extra_scripts`
+(additive — runs _on top of_ the standard set), and `build_env` (non-secret
+`KEY=VALUE` lines exported for install/build/test, e.g. placeholder `VITE_*`
+values: a bundler that bakes in a missing value can tree-shake the whole app
+away and still "build"). Bun steps are gated on a `package.json` existing, so a
+project-less repo stays green.
 
 ## How updates flow
 

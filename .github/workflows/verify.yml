@@ -23,6 +23,14 @@ on:
         type: string
         required: false
         default: ""
+      build_env:
+        description: >-
+          Non-secret KEY=VALUE lines exported for the install, build and test
+          steps (e.g. placeholder VITE_* values a bundler needs at build
+          time). Visible in logs: never put secrets here.
+        type: string
+        required: false
+        default: ""
 
 # Permissions inherit from the caller. Callers grant issues: write so a failure
 # on main opens an alert issue; public callers also grant pull-requests: write
@@ -100,6 +108,31 @@ jobs:
 
       # Every committed bun.lock (e.g. a CDK app in infra/), not just the root:
       # a lockfile Bun rejects must fail here, not after merge.
+      # Build-time values from the caller (validated: one KEY=VALUE per line,
+      # shell-style uppercase keys, nothing that changes how tools run).
+      - name: Build env
+        if: ${{ inputs.build_env != '' }}
+        env:
+          BUILD_ENV: ${{ inputs.build_env }}
+        run: |
+          while IFS= read -r line; do
+            line="${line%$'\r'}"
+            case "$line" in "" | "#"*) continue ;; esac
+            key="${line%%=*}"
+            if [ "$key" = "$line" ] || ! [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+              echo "::error::build_env: expected KEY=VALUE, got '$key...'"
+              exit 1
+            fi
+            case "$key" in
+              PATH | HOME | NODE_OPTIONS | LD_* | DYLD_* | BASH_ENV | ENV | GITHUB_* | RUNNER_* | ACTIONS_*)
+                echo "::error::build_env: $key can't be set here"
+                exit 1
+                ;;
+            esac
+            echo "$line" >> "$GITHUB_ENV"
+            echo "set $key"
+          done <<<"$BUILD_ENV"
+
       - name: Install
         if: ${{ fromJSON(steps.detect.outputs.project) }}
         run: |
