@@ -11,12 +11,14 @@ is only needed when something genuinely breaks.
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.github/workflows/verify.yml` | The **reusable CI** every repo calls on PRs and on `main` — Bun pin check, install, format, typecheck, build, test, Docker image build, dependency-review, failure alerts                                                                             |
 | `baseline/`                    | The **config files** seeded into each repo: `common/` for every repo (Dependabot, Renovate, the Dependabot auto-merge workflow, Prettier ignores, EditorConfig, CODEOWNERS) plus one framework layer, `astro/` or `vue/` (Prettier config, `.vscode`) |
-| `bootstrap.sh`                 | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, auto-merge, merge hygiene, security toggles, hardened Actions permissions                                                                                  |
+| `bootstrap.sh`                 | Creates or syncs a repo and applies the **settings** files can't carry: branch protection, auto-merge, merge hygiene, security toggles, hardened Actions permissions. `--dry-run` previews without changing anything                                  |
+| `set-automerge-secrets.sh`     | Stores the auto-merge app's credentials as Dependabot secrets on one or more repos                                                                                                                                                                    |
 
 ## Using it
 
 ```sh
 ./bootstrap.sh my-new-site --create --public --framework astro   # new repo, fully hardened
+./bootstrap.sh mogarmory --private --dry-run                      # preview: changes nothing
 ./bootstrap.sh mogarmory --private                                # re-apply to an existing repo (opens a PR)
 ```
 
@@ -27,16 +29,26 @@ legitimately customise them (extra Dependabot directories, Renovate rules,
 Prettier ignores, a CI caller with `extra_scripts`), so any existing file that
 differs from the baseline is listed as `kept` for you to reconcile by hand. An
 existing `ci.yml` that doesn't call `verify.yml` yet is kept too — migrate it
-manually; until then the repo keeps its current required checks. The framework
+manually. Until it does, the repo keeps its current required checks and its
+"require up to date" setting, auto-merge stays off, and `automerge.yml` /
+`renovate.json` are **held** (listed, not added): bot PRs mustn't start merging
+on an old CI that doesn't gate deploys. The framework
 layer is detected from `package.json` (`astro`, else `vue`); override with
 `--framework astro|vue|none`, e.g. for a brand-new repo with no `package.json`
 yet.
 
+**Always dry-run first** (`--dry-run`). It clones into a temp dir and only reads
+from GitHub: it lists the files it would add (full diff saved to a file), shows
+every setting as current -> planned (`~` marks a change), and warns about
+anything a real run would remove — the branch-protection update replaces the
+whole rule, so hand-set extras like required linear history or signed commits
+would be dropped.
+
 New repos get the baseline on their default branch and protected; existing
 protected repos get it as a PR. It also reports missing required CI scripts and
 missing auto-merge secrets. Flags: `--create`, `--public`/`--private`,
-`--owner <login>`, `--framework <f>`, `--no-files`, `--no-settings`. Requires
-`gh`, `git` and `jq`.
+`--owner <login>`, `--framework <f>`, `--no-files`, `--no-settings`,
+`--dry-run`. Requires `gh`, `git` and `jq`.
 
 A consumer ends up with the seeded configs plus a thin CI caller pinned to a
 release of this repo's reusable workflow:
@@ -54,7 +66,7 @@ permissions:
 
 jobs:
   verify:
-    uses: salt-mountain/ops/.github/workflows/verify.yml@<sha> # v1.1.0
+    uses: salt-mountain/ops/.github/workflows/verify.yml@<sha> # v1.1.1
     with:
       dependency_review: true # public repos only
 
@@ -132,13 +144,19 @@ deploy `main`):
    read and write. Nothing else. "Only on this account".
 3. Create it, note the **Client ID**, and generate a **private key** (`.pem`).
 4. Install it on the same repos ("Only select repositories").
-5. Per repo, store both as **Dependabot** secrets (Dependabot-triggered
-   workflows can't read Actions secrets):
+5. Store both as **Dependabot** secrets on each repo (Dependabot-triggered
+   workflows can't read Actions secrets). `set-automerge-secrets.sh` first
+   checks the credentials and that the app is installed on each repo, and skips
+   repos it isn't installed on:
 
    ```sh
-   gh secret set AUTOMERGE_APP_CLIENT_ID --app dependabot --repo salt-mountain/<repo>
-   gh secret set AUTOMERGE_APP_PRIVATE_KEY --app dependabot --repo salt-mountain/<repo> < key.pem
+   export AUTOMERGE_APP_CLIENT_ID=Iv23...
+   export AUTOMERGE_APP_PRIVATE_KEY_PATH=~/secure/automerge.private-key.pem
+   ./set-automerge-secrets.sh --dry-run osim.dev blackcatlandmanagement   # check only
+   ./set-automerge-secrets.sh osim.dev blackcatlandmanagement             # or: --all
    ```
+
+   Re-run it for every repo after rotating the app's private key.
 
 Without the secrets, `automerge.yml` warns and does nothing.
 
