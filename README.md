@@ -89,6 +89,15 @@ mean "the site works". Beyond those, `verify.yml`:
 - **Installs every committed `bun.lock`** with `--frozen-lockfile` (e.g. a CDK
   app in `infra/`), not just the root.
 - **Builds the Docker image** (no push) if the repo has a root `Dockerfile`.
+- **Scans the build output for secrets** right after the build: fails if
+  `output_dir` (default `dist/`) contains secret-looking files (`.env*`,
+  `.dev.vars`, keys, `.git/`, `cdk-outputs.json`, …) or anything
+  [gitleaks](https://github.com/gitleaks/gitleaks) recognises as a credential
+  (redacted in the log). Deploys need verify, so a leaked key never reaches the
+  live site. This covers what GitHub secret scanning can't: keys baked into
+  bundles at build time never touch git. A false positive goes in a
+  `.gitleaksignore` at the repo root (one finding fingerprint per line). The
+  gitleaks version and checksum are pinned in `verify.yml`; bump them by hand.
 - **Alerts on `main`.** A failed run on `main` opens (or comments on) a
   `ci-failure` issue assigned to the owner; the next green run closes it. Merges
   are mostly bots, and GitHub only emails the actor about failed runs.
@@ -105,11 +114,12 @@ mean "the site works". Beyond those, `verify.yml`:
 Inputs: `node_version` (default `24`, the current Active LTS; match your deploy
 workflow),
 `dependency_review` (public-only, set by visibility), `extra_scripts`
-(additive — runs _on top of_ the standard set), and `build_env` (non-secret
+(additive — runs _on top of_ the standard set), `build_env` (non-secret
 `KEY=VALUE` lines exported for install/build/test, e.g. placeholder `VITE_*`
 values: a bundler that bakes in a missing value can tree-shake the whole app
-away and still "build"). Bun steps are gated on a `package.json` existing, so a
-project-less repo stays green.
+away and still "build"), and `output_dir` (the deployed build output that gets
+secret-scanned; default `dist`). Bun steps are gated on a `package.json`
+existing, so a project-less repo stays green.
 
 ## How updates flow
 

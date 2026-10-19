@@ -31,6 +31,13 @@ on:
         type: string
         required: false
         default: ""
+      output_dir:
+        description: >-
+          The build output that gets deployed (scanned for secrets after the
+          build). Default dist/, which Astro and Vite use.
+        type: string
+        required: false
+        default: "dist"
 
 # Permissions inherit from the caller. Callers grant issues: write so a failure
 # on main opens an alert issue; public callers also grant pull-requests: write
@@ -225,6 +232,43 @@ jobs:
         run: |
           . "$RUNNER_TEMP/verify-step.sh" "Build"
           bun run build
+
+      # The deploy uploads the build output, not the repo, so scan exactly that.
+      # GitHub secret scanning only sees what's committed (and only on public
+      # repos here); a key baked into a bundle at build time (a VITE_/PUBLIC_
+      # variable, a stray file in public/) never touches git. Deploy jobs need
+      # verify, so a hit here keeps it off the live site.
+      - name: Scan build output for secrets
+        if: ${{ fromJSON(steps.detect.outputs.project) }}
+        env:
+          OUTPUT_DIR: ${{ inputs.output_dir }}
+          # Pinned and checksum-verified; bump both together from
+          # https://github.com/gitleaks/gitleaks/releases (checksums.txt).
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          . "$RUNNER_TEMP/verify-step.sh" "Scan build output for secrets"
+          if [ ! -d "$OUTPUT_DIR" ]; then
+            echo "::error::$OUTPUT_DIR/ doesn't exist after the build; set verify's output_dir input to the deployed directory"
+            exit 1
+          fi
+          # Files that should never be published, whatever they contain.
+          bad="$(find "$OUTPUT_DIR" \( -name '.env' -o -name '.env.*' -o -name '.dev.vars*' \
+            -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name 'id_rsa*' \
+            -o -name 'id_ed25519*' -o -name '.npmrc' -o -name 'credentials*' -o -name 'cdk-outputs.json' \
+            -o -path '*/.git/*' -o -name '.git' \) -print)"
+          if [ -n "$bad" ]; then
+            printf '::error::Secret-looking files in %s/ would be deployed:\n%s\n' "$OUTPUT_DIR" "$bad"
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -sSfL --retry 4 --retry-all-errors -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "$GITLEAKS_SHA256  $archive" | sha256sum -c --quiet -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+          # Redacted output: file and rule, never the value. False positives go
+          # in a .gitleaksignore (one finding fingerprint per line) at the repo root.
+          "$RUNNER_TEMP/gitleaks" dir "$OUTPUT_DIR" --redact --no-banner --verbose --exit-code 1
 
       - name: Test
         if: ${{ fromJSON(steps.detect.outputs.project) }}
