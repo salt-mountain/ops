@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
-    "ops itself: Renovate tracks the version strings inside verify.yml that Dependabot can't see.",
+    "ops itself: Renovate tracks the version strings inside verify.yml that Dependabot can't see (the betterleaks pin, the node_version default).",
     "Dependabot keeps the action pins current. Merged updates reach consumer repos only when ops tags a release."
   ],
   "enabledManagers": ["custom.regex"],
@@ -13,12 +13,12 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "gitleaks binary in verify.yml: version and the linux_x64 tarball sha256, updated together from the release's checksums file",
+      "description": "betterleaks binary in verify.yml: version and the linux_x64 tarball sha256, updated together from the release's checksums file",
       "managerFilePatterns": ["/^\\.github/workflows/verify\\.yml$/"],
       "matchStrings": [
-        "GITLEAKS_VERSION:\\s*\"(?<currentValue>v[0-9.]+)\"\\s+GITLEAKS_SHA256:\\s*\"(?<currentDigest>[0-9a-f]{64})\""
+        "BETTERLEAKS_VERSION:\\s*\"(?<currentValue>v[0-9.]+)\"\\s+BETTERLEAKS_SHA256:\\s*\"(?<currentDigest>[0-9a-f]{64})\""
       ],
-      "depNameTemplate": "gitleaks/gitleaks",
+      "depNameTemplate": "betterleaks/betterleaks",
       "datasourceTemplate": "github-release-attachments"
     },
     {
