@@ -1,0 +1,52 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "ops itself: Renovate tracks the version strings inside verify.yml that Dependabot can't see.",
+    "Dependabot keeps the action pins current. Merged updates reach consumer repos only when ops tags a release."
+  ],
+  "enabledManagers": ["custom.regex"],
+  "dependencyDashboard": false,
+  "vulnerabilityAlerts": {
+    "enabled": false
+  },
+  "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "gitleaks binary in verify.yml: version and the linux_x64 tarball sha256, updated together from the release's checksums file",
+      "managerFilePatterns": ["/^\\.github/workflows/verify\\.yml$/"],
+      "matchStrings": [
+        "GITLEAKS_VERSION:\\s*\"(?<currentValue>v[0-9.]+)\"\\s+GITLEAKS_SHA256:\\s*\"(?<currentDigest>[0-9a-f]{64})\""
+      ],
+      "depNameTemplate": "gitleaks/gitleaks",
+      "datasourceTemplate": "github-release-attachments"
+    },
+    {
+      "customType": "regex",
+      "description": "verify.yml's node_version input default (the Node every consumer gets unless it passes its own)",
+      "managerFilePatterns": ["/^\\.github/workflows/verify\\.yml$/"],
+      "matchStrings": [
+        "node_version:\\n(?:\\s+[a-z].*\\n)*?\\s+default:\\s*\"(?<currentValue>\\d+)\""
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Bake time: hold new releases before proposing them (supply-chain age gate).",
+      "matchUpdateTypes": ["minor", "patch"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "minimumReleaseAge": "30 days"
+    },
+    {
+      "description": "Never auto-merge in ops: its main only runs Lint, and a merge here is a change to every repo's CI once tagged. Review, merge, then tag.",
+      "matchPackageNames": ["*"],
+      "automerge": false
+    }
+  ]
+}

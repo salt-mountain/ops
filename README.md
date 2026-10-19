@@ -97,7 +97,8 @@ mean "the site works". Beyond those, `verify.yml`:
   live site. This covers what GitHub secret scanning can't: keys baked into
   bundles at build time never touch git. A false positive goes in a
   `.gitleaksignore` at the repo root (one finding fingerprint per line). The
-  gitleaks version and checksum are pinned in `verify.yml`; bump them by hand.
+  gitleaks version and checksum are pinned in `verify.yml`; this repo's own
+  `renovate.json` bumps both together (and verify's `node_version` default).
 - **Alerts on `main`.** A failed run on `main` opens (or comments on) a
   `ci-failure` issue assigned to the owner; the next green run closes it. Merges
   are mostly bots, and GitHub only emails the actor about failed runs.
@@ -152,7 +153,9 @@ by tagging a release.
 ## One-time setup
 
 **Mend Renovate app.** Install https://github.com/apps/renovate on the repos
-that should get Renovate PRs ("Only select repositories"). Do it after the
+that should get Renovate PRs ("Only select repositories"), including `ops`
+itself, whose `renovate.json` tracks the gitleaks pin and the `node_version`
+default in `verify.yml` (never auto-merged: review, merge, then tag). Do it after the
 repo's `renovate.json` is on `main`; otherwise Mend opens an onboarding PR with
 its own defaults — close that unmerged.
 
