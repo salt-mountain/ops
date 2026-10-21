@@ -50,6 +50,13 @@ missing auto-merge secrets. Flags: `--create`, `--public`/`--private`,
 `--owner <login>`, `--framework <f>`, `--no-files`, `--no-settings`,
 `--dry-run`. Requires `gh`, `git` and `jq`.
 
+Commits and PRs always come from `salt-mountain` (`GH_USER` in the script),
+whatever the machine's own git identity is. Before it creates or commits
+anything, the script checks that `gh` is logged in as `salt-mountain` and that
+git commit signing is on (`commit.gpgsign`), and stops if either isn't. It then
+commits as `salt-mountain` with the account's noreply email. A dry run shows the
+identity it would use, or what a real run would stop on.
+
 A consumer ends up with the seeded configs plus a thin CI caller pinned to a
 release of this repo's reusable workflow:
 

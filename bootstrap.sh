@@ -43,6 +43,7 @@ OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASELINE="$OPS_DIR/baseline"
 OPS_OWNER="salt-mountain"
 OPS_SLUG="salt-mountain/ops" # where verify.yml lives; consumers reference it
+GH_USER="salt-mountain"      # commits and PRs come from this account
 
 # ---- args -------------------------------------------------------------------
 OWNER="$OPS_OWNER"
@@ -102,6 +103,37 @@ else
   echo "▸ bootstrapping $SLUG  (visibility=$VISIBILITY create=$CREATE)"
 fi
 
+# Commit and open PRs as $GH_USER, signed.
+COMMIT_NAME="" COMMIT_EMAIL=""
+check_identity() {
+  local user login id problems=()
+  user="$(gh api user --jq '"\(.login) \(.id)"' 2>/dev/null || true)"
+  login="${user% *}" id="${user#* }"
+  if [ "$login" != "$GH_USER" ] || [ -z "$id" ]; then
+    problems+=("gh is logged in as '${login:-?}', not $GH_USER (gh auth switch -u $GH_USER)")
+  else
+    COMMIT_NAME="$GH_USER"
+    COMMIT_EMAIL="$id+$GH_USER@users.noreply.github.com"
+  fi
+  # Never turn signing off; just require it.
+  if [ "$(git config --get commit.gpgsign 2>/dev/null)" != "true" ]; then
+    problems+=("git commit signing is off (commit.gpgsign); set up signing on this machine")
+  fi
+  if [ ${#problems[@]} -eq 0 ]; then
+    echo "  • commits as $COMMIT_NAME <$COMMIT_EMAIL>, signed ($(git config --get gpg.format || echo openpgp))"
+    return 0
+  fi
+  local p
+  for p in "${problems[@]}"; do echo "  ⚠ $p" >&2; done
+  if $DRY_RUN; then
+    echo "  ⚠ a real run would stop here" >&2
+    return 0
+  fi
+  echo "error: fix the above, then re-run" >&2
+  exit 1
+}
+if $DO_FILES; then check_identity; fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -126,6 +158,10 @@ if [ ! -d "$WORK/.git" ]; then
 fi
 cd "$WORK"
 DEFAULT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo main)"
+if [ -n "$COMMIT_EMAIL" ]; then
+  git config user.name "$COMMIT_NAME"
+  git config user.email "$COMMIT_EMAIL"
+fi
 
 # Has this repo's CI moved onto ops verify.yml? (A repo without a ci.yml gets
 # a generated caller, so it counts.) Until it has, auto-merge stays off and the
