@@ -180,10 +180,6 @@ gen_ci_yaml() {
   # The "# <tag>" comment is what lets the consumer's Dependabot bump this ref.
   local ref_line="@$ops_ref"
   [ -n "$ops_tag" ] && ref_line="@$ops_ref # $ops_tag"
-  # Public repos also grant pull-requests: write so verify.yml's dependency-review
-  # step can post its findings as a PR comment.
-  local pr_perm=""
-  [ "$VISIBILITY" = "public" ] && pr_perm=$'\n  pull-requests: write # dependency-review comment'
   mkdir -p .github/workflows
   {
     cat <<YAML
@@ -199,7 +195,8 @@ on:
 
 permissions:
   contents: read
-  issues: write # verify opens/closes an alert issue when main fails/recovers$pr_perm
+  issues: write # verify opens/closes an alert issue when main fails/recovers
+  pull-requests: write # verify comments on PRs
 
 # Cancel superseded PR runs, but never a run on main: that would cancel an
 # in-flight deploy. Main runs queue instead.
