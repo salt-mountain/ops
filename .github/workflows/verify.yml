@@ -40,8 +40,8 @@ on:
         default: "dist"
 
 # Permissions inherit from the caller. Callers grant issues: write so a failure
-# on main opens an alert issue; public callers also grant pull-requests: write
-# for the dependency-review comment.
+# on main opens an alert issue, and pull-requests: write so verify can comment
+# on failed bot PRs and post the dependency-review comment.
 
 jobs:
   verify:
@@ -348,6 +348,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # Stop on a failed gh call
+          set -o pipefail
           marker='<!-- salt-mountain/ops verify -->'
           body="$RUNNER_TEMP/verify-comment.md"
           {
@@ -378,6 +380,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # Stop on a failed gh call
+          set -o pipefail
           marker='<!-- salt-mountain/ops verify -->'
           id="$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"

@@ -69,7 +69,7 @@ on:
 permissions:
   contents: read
   issues: write # failure alert issue
-  pull-requests: write # public repos only: dependency-review comment
+  pull-requests: write # bot-PR and dependency-review comments
 
 jobs:
   verify:
