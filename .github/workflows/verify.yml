@@ -246,8 +246,8 @@ jobs:
           # security-fixes only); same CLI and .gitleaksignore support. Pinned and
           # checksum-verified; Renovate (ops renovate.json) bumps the version and
           # the linux_x64 checksum together. Keep the "v" prefix.
-          BETTERLEAKS_VERSION: "v1.9.0"
-          BETTERLEAKS_SHA256: "f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"
+          BETTERLEAKS_VERSION: "v1.10.0"
+          BETTERLEAKS_SHA256: "9d9ad503cd5d80d18a939352266c3fcca52f10da9b83cd5cfe646989b13940fe"
         run: |
           . "$RUNNER_TEMP/verify-step.sh" "Scan build output for secrets"
           if [ ! -d "$OUTPUT_DIR" ]; then
